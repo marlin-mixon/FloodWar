@@ -1,0 +1,230 @@
+<!doctype html>
+<html>
+<head>
+<script type="text/javascript">
+boardWidth = 21; boardHeight = 21;
+canWidth = 400; canHeight = 400;
+var nColorHits;
+var moveNo, maxMove = 35000;
+var computerCurrentColor, humanCurrentColor;
+// ownership sides
+var HUMAN = 1; COMPUTER = 2; NONE = 0; HYPOTHESIZE = 3;
+var humanScore, computerScore;
+
+// var updateList;
+var b = new Array(boardHeight);
+for (var i = 0; i < boardHeight; i++) {
+    b[i] = new Array(boardWidth);
+}
+var colorList = ['null', '#BB0000', '#ff7000', 'yellow', 'cyan', '#00bb00', 'purple'];
+function initBoard() {
+    for (i=0;i<boardHeight;i++) {
+        for (j=0;j<boardWidth;j++) {
+            b[i][j] = {"color": Math.floor((Math.random()*6)+1), "ownership":NONE }
+            //b[i][j] = {"color": Math.floor((Math.random()*6)+1)}
+        }
+    }
+    b[0][0].ownership = HUMAN;
+    b[boardHeight-1][boardWidth-1].ownership = COMPUTER;
+    // put human player in upper left
+    chooseColor(HUMAN, b[0][0].color);
+    // put computer opponent in lower right
+    chooseColor(COMPUTER, b[boardHeight-1][boardWidth-1].color);
+    countOwnership();
+    moveNo = 0;
+    displayBoard();
+}
+function displayBoard() {
+    var i, j, cssColor;
+    cellWidth = canWidth / boardWidth;
+    cellHeight = canHeight / boardHeight;
+    con.fillStyle = "white";
+    con.fillRect(0,0,canHeight,canWidth);
+    for (i=0;i<boardHeight;i++) {
+        for (j=0;j<boardWidth;j++) {
+            cssColor = colorList[b[i][j].color];
+            con.fillStyle = cssColor;
+            con.fillRect(j*cellWidth, i*cellHeight, cellWidth-1, cellHeight-1);
+        }
+    }
+}
+function bothPlayersMove(humanColor) {
+    // if human did an illegal move, do nothing and don't let the computer move either.
+    if (humanMove(humanColor)) {
+        computerMove();
+    }
+}
+function displayControls() {
+    var i, ctrl;
+    outHtml = "";
+    for (i=1;i<=6;i++) {
+        outHtml += '<div id="color-button-'+i+'" style="width: 160px;height: 45px; background-color:'+colorList[i]+';" onclick="bothPlayersMove('+i+');"></div>';
+        if (i < 6) {
+            outHtml += '<div id="spacer-'+i+'" style="height: 15px;"></div>';
+        } else {
+            countOwnership();
+            outHtml += '<div id="score">You='+humanScore+"/Computer="+computerScore+'</div>';
+            outHtml += '<div><button onClick="initBoard();displayControls();">New Game</button></div>';
+        }
+    }
+    ctrl = document.getElementById("controls");
+    ctrl.innerHTML = outHtml;
+}
+
+function countOwnership() {
+    var color, i, j;
+    humanScore = 0;
+    computerScore = 0;
+    color = b[0][0].color;
+    for (i=0;i<boardHeight;i++) {
+        for (j=0;j<boardWidth;j++) {
+            if (b[i][j].ownership == COMPUTER) {
+                computerScore++;
+            } else if (b[i][j].ownership == HUMAN) {
+                humanScore++;
+            }
+        }
+    }
+
+}
+
+function chooseColor(side, theColor) {
+    if (moveNo < maxMove) {
+        var i, j;
+        nColorHits = 0;
+        for (i=0;i<boardHeight;i++) {
+            for (j=0;j<boardWidth;j++) {
+                b[i][j].visited = false;
+            }
+        }
+        for (i=0;i<boardHeight;i++) {
+            for (j = 0; j<boardWidth;j++) {
+                if (b[i][j].ownership == side || (b[i][j].ownership == COMPUTER && side == HYPOTHESIZE) ) {
+                    expandColor(i,j,theColor,side);
+                }
+            }
+        }
+        if (nColorHits > 0) {
+            for (i=0;i<boardHeight;i++) {
+                for (j=0;j<boardWidth;j++) {
+                    if (b[i][j].ownership == side) {
+                        b[i][j].color = theColor;
+                    }
+                }
+            }
+            displayBoard();
+            moveNo++;
+            displayControls();
+        }
+    }
+}
+function humanMove(color) {
+    if (moveNo < 3 || (moveNo >= 3 && color != computerCurrentColor)) {
+        chooseColor(HUMAN,color);
+        humanCurrentColor = color;
+        return true;
+    } else {
+        return false;
+    }
+}
+function computerMove() {
+    var i, thisColor, bestColor, maxScore;
+    maxScore = 0;
+    bestColor = 1;
+    for (i=0;i<6;i++) {
+        thisColor = i+1;
+        if (thisColor != computerCurrentColor && (moveNo < 3 || (moveNo >= 3 && thisColor != humanCurrentColor))) {
+            chooseColor(HYPOTHESIZE, thisColor);
+            if (nColorHits > maxScore) {
+                bestColor = thisColor
+                maxScore = nColorHits;
+            }
+        }
+    }   
+    chooseColor(COMPUTER, bestColor);
+    computerCurrentColor = bestColor;
+}
+function expandColor(i,j,theColor,side) {
+    if (! b[i][j].visited) {    
+        b[i][j].visited = true;
+        // explore North
+        if (i>0) {            
+            if (b[i-1][j].ownership == NONE && b[i-1][j].color == theColor && ! b[i-1][j].visited) {
+                nColorHits++;
+                if (side == HUMAN || side == COMPUTER) {
+                    b[i-1][j].ownership = side;
+                }
+                expandColor(i-1, j, theColor,side);
+            }
+        }
+        // explore South
+        if (i<boardWidth-1) {            
+            if (b[i+1][j].ownership == NONE && b[i+1][j].color == theColor && ! b[i+1][j].visited) {
+                nColorHits++;
+                if (side == HUMAN || side == COMPUTER) {
+                    b[i+1][j].ownership = side;
+                }
+                expandColor(i+1, j, theColor,side);
+            }
+        }
+        // explore West
+        if (j>0) {            
+            if (b[i][j-1].ownership == NONE && b[i][j-1].color == theColor && ! b[i][j-1].visited) {
+                nColorHits++;                
+                if (side == HUMAN || side == COMPUTER) {
+                    b[i][j-1].ownership = side;
+                }
+                expandColor(i, j-1, theColor,side);
+            }
+        }
+        // explore East
+        if (j<boardHeight-1) {            
+            if (b[i][j+1].ownership == NONE && b[i][j+1].color == theColor && ! b[i][j+1].visited) {
+                nColorHits++;                
+                if (side == HUMAN || side == COMPUTER) {
+                    b[i][j+1].ownership = side;
+                }
+                expandColor(i, j+1, theColor,side);
+            }
+        }
+    }
+}
+</script>
+<style>
+#controls {
+    display: block;
+    width: 200px;
+    height: 400px;
+    border: 1px;
+    border: 1px solid black;
+    float: left;
+}
+#shim {
+    display: block;
+    width: 5px;
+    height: 400px;
+    float: left;
+}
+#can {
+    display: block;
+    left: 200px;
+}
+
+</style>
+</head>
+<body>
+<div id="controls">
+</div>
+<div id="shim"></div>
+<canvas id="can" width="800" height="800"></canvas>
+<script type="text/javascript">
+    alert("Hello friends, This is version 0.3. After move 3 you can't choose the same color as your opponent.");
+    var can = document.getElementById("can");
+    can.width = canWidth; can.height = canHeight;
+    var con = can.getContext("2d");
+    initBoard();
+    displayControls();
+</script>
+
+</body>
+</html>
