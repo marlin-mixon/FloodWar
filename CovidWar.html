@@ -1,0 +1,519 @@
+
+<!doctype html>
+<html>
+<head>
+    <title>CovidWars by Marlin Mixon</title>
+
+    <script type="text/javascript">
+    const BOARD_WIDTH = 21; const BOARD_HEIGHT = 21;
+    const WIN_SCORE = Math.round( (BOARD_WIDTH * BOARD_HEIGHT) / 2);
+    const MAX_MOVE = WIN_SCORE;
+    const CAN_WIDTH = 400; const CAN_HEIGHT = 400;
+    const COMPUTER_START_ROW = BOARD_HEIGHT - 1;
+    const COMPUTER_START_COL = BOARD_WIDTH - 1;
+    const colorList = ['null', '#BB0000', '#ff7000', 'yellow', 'cyan', '#00bb00', 'purple'];
+    // const colorList = ['null', '#000049', '#eeeed0', '#8000000', '#0037b8', '#e3e2db', '#ff2a2a'];  // 4th of July
+    const version = "0.9, 7/14/2020";
+    const instructions = `In this game you get to infect humanity with Covid! You start out as patient zero (the pixel in the upper left corner of the pixel grid marked with "you").  Your opponent who is trying to do the same thing with their patient zero in the lower right corner (marked with "them").  You begin infecting by mutating the Covid strain using the color-coded mutation buttons on the left.  In order to infect, you mutate yourself to a new color so that you can infect those around you that are colored by strain susceptibility.  If you are next to a red-susceptible patient and press red, the red-susceptible patient joins your hoarde of infected patients.  Continue mutating and march across the pixel grid infecting as many victims as possible.  If you infect the majority, you win!  For the first move only you are allowed to choose the same strain (color) as your opponent.  version ${version}`;
+    var need_win_alert = true;
+    var nColorHits;
+    var moveNo = 1;
+    var computerCurrentColor = 0, humanCurrentColor;
+    // ownership sides
+    var HUMAN = 1; COMPUTER = 2; NONE = 0; HYPOTHESIZE = 3;
+    var humanScore, computerScore;
+
+    // var updateList;
+    var b = new Array(BOARD_HEIGHT);
+    for (let i = 0; i < BOARD_HEIGHT; i++) {
+        b[i] = new Array(BOARD_WIDTH);
+    }
+
+    function startup() {
+      need_win_alert = true;
+      // AJAX get data using fetch   
+      fetch(`startup.php?method=startup&BOARD_WIDTH=${BOARD_WIDTH}&BOARD_HEIGHT=${BOARD_HEIGHT}&NONE=${NONE}`)
+        .then(response => response.json())
+        .then(json => {
+          b = json;
+          b[0][0].ownership = HUMAN;
+          b[BOARD_HEIGHT-1][BOARD_WIDTH-1].ownership = COMPUTER;
+          // put human player in upper left
+          chooseColor(HUMAN, b[0][0].color);
+          // put computer opponent in lower right
+          chooseColor(COMPUTER, b[COMPUTER_START_ROW][COMPUTER_START_COL].color);
+          countOwnership();
+          moveNo = 0;
+          displayBoard();  
+          displayScores();        
+      });        
+    }
+    function displayBoard() {
+        var i, j, cssColor;
+        cellWidth = CAN_WIDTH / BOARD_WIDTH;
+        cellHeight = CAN_HEIGHT / BOARD_HEIGHT;
+        con.fillStyle = "white";
+        con.fillRect(0,0,CAN_HEIGHT,CAN_WIDTH);
+        for (i=0;i<BOARD_HEIGHT;i++) {
+            for (j=0;j<BOARD_WIDTH;j++) {
+                cssColor = colorList[b[i][j].color];
+                con.fillStyle = cssColor;
+                con.fillRect(j*cellWidth, i*cellHeight, cellWidth-1, cellHeight-1);
+            }
+        }
+    }
+    function bothPlayersMove(humanColor) {
+        // if human did an illegal move, do nothing and don't let the computer move either.
+        if (humanMove(humanColor)) {
+            computerMove();
+        }
+    }
+    function displayButtons() {
+        let i, ctrl;
+        let outHtml = document.getElementById("control-content").innerText;
+        for (i=1;i<=6;i++) {
+            var replace_expression = `__color${i}__`;
+            outHtml = outHtml.replace(replace_expression, colorList[i]);
+        }
+        ctrl = document.getElementById("buttons");
+        ctrl.innerHTML = outHtml;
+        clear_all_unavailables();
+        show_error_message('');
+    }
+
+    function set_unavailable_button(number, state) {
+      if (state === "off" ) {
+        document.getElementById(`unavailable-${number}`).style.display = "none";
+      } else if (state === "on") {
+        document.getElementById(`unavailable-${number}`).style.display = "block";
+      }
+    }
+
+    function show_error_message(mess)  {
+      document.getElementById('err-message').innerHTML = mess;
+    }
+
+    function displayScores() {
+        countOwnership();
+
+        if (need_win_alert) {
+            if (humanScore >= WIN_SCORE) {
+                alert("You won!");
+                need_win_alert = false;
+            }
+            if (computerScore >= WIN_SCORE) {
+                alert("Computer wins");
+                need_win_alert = false;
+            }
+        }
+        let outHtml = document.getElementById("score-content").innerText;
+        outHtml = outHtml.replace(/__computer_score__/, computerScore);
+        outHtml = outHtml.replace(/__human_score__/, humanScore);
+        let score = document.getElementById("scores");
+        score.innerHTML = outHtml;
+    }
+
+    function countOwnership() {
+        var color, i, j;
+        humanScore = 0;
+        computerScore = 0;
+        color = b[0][0].color;
+        for (i=0;i<BOARD_HEIGHT;i++) {
+            for (j=0;j<BOARD_WIDTH;j++) {
+                if (b[i][j].ownership == COMPUTER) {
+                    computerScore++;
+                } else if (b[i][j].ownership == HUMAN) {
+                    humanScore++;
+                }
+            }
+        }
+
+    }
+
+    function chooseColor(side, theColor) {
+      //let nColorHits;
+      if (moveNo < MAX_MOVE) {
+        nColorHits = 0;
+        for (let i=0;i<BOARD_HEIGHT;i++) {
+          for (let j=0;j<BOARD_WIDTH;j++) {
+            b[i][j].visited = false;
+          }
+        }
+        for (let i=0;i<BOARD_HEIGHT;i++) {
+          for (let j=0; j<BOARD_WIDTH;j++) {
+            if (b[i][j].ownership == side || (b[i][j].ownership == COMPUTER && side == HYPOTHESIZE) ) {
+              expandColor(i,j,theColor,side);
+            }
+          }
+        }
+        if (nColorHits > 0) {
+          for (let i=0;i<BOARD_HEIGHT;i++) {
+            for (let j=0;j<BOARD_WIDTH;j++) {
+              if (b[i][j].ownership == side) {
+                b[i][j].color = theColor;
+              }
+            }
+          }
+          displayBoard();
+          moveNo++;
+          displayScores();
+        }
+      }
+      return nColorHits;
+    }
+    function humanMove(color) {
+      if (moveNo < 3 || (moveNo >= 3 && color != computerCurrentColor)) {
+        let n_changes = chooseColor(HUMAN,color);
+        if (n_changes === 0) {
+          set_unavailable_button(color, 'on');
+          show_error_message('That color is not next to you');
+          return false;
+        }
+        humanCurrentColor = color;
+        clear_all_unavailables();
+        show_error_message('');
+        return true;
+      } else {
+        if (color === computerCurrentColor) {
+          set_unavailable_button(color, 'on');
+          show_error_message('Color is already taken');
+        }
+        return false;
+      }
+    }
+    function clear_all_unavailables() {
+      for (let i=1;i<=6;i++) {
+        set_unavailable_button(i, 'off');
+      }
+    }
+    function computerMove() {
+        let i, thisColor, bestColor, maxScore;
+        computerCurrentColor = b[COMPUTER_START_ROW][COMPUTER_START_COL].color;
+        maxScore = 0;
+        bestColor = 0;
+        for (i=0;i<6;i++) {
+            thisColor = i+1;
+            if (thisColor != computerCurrentColor && (moveNo < 3 || (moveNo >= 3 && thisColor != humanCurrentColor))) {
+                chooseColor(HYPOTHESIZE, thisColor);
+                if (nColorHits > maxScore) {
+                    bestColor = thisColor
+                    maxScore = nColorHits;
+                }
+            }
+        }   
+        chooseColor(COMPUTER, bestColor);
+        if (bestColor !== 0) {
+            computerCurrentColor = bestColor;
+        }
+    }
+    function expandColor(i,j,theColor,side) {
+        if (! b[i][j].visited) {    
+            b[i][j].visited = true;
+            // explore North
+            if (i>0) {            
+                if (b[i-1][j].ownership == NONE && b[i-1][j].color == theColor && ! b[i-1][j].visited) {
+                    nColorHits++;
+                    if (side == HUMAN || side == COMPUTER) {
+                        b[i-1][j].ownership = side;
+                    }
+                    expandColor(i-1, j, theColor,side);
+                }
+            }
+            // explore South
+            if (i<BOARD_WIDTH-1) {            
+                if (b[i+1][j].ownership == NONE && b[i+1][j].color == theColor && ! b[i+1][j].visited) {
+                    nColorHits++;
+                    if (side == HUMAN || side == COMPUTER) {
+                        b[i+1][j].ownership = side;
+                    }
+                    expandColor(i+1, j, theColor,side);
+                }
+            }
+            // explore West
+            if (j>0) {            
+                if (b[i][j-1].ownership == NONE && b[i][j-1].color == theColor && ! b[i][j-1].visited) {
+                    nColorHits++;                
+                    if (side == HUMAN || side == COMPUTER) {
+                        b[i][j-1].ownership = side;
+                    }
+                    expandColor(i, j-1, theColor,side);
+                }
+            }
+            // explore East
+            if (j<BOARD_HEIGHT-1) {            
+                if (b[i][j+1].ownership == NONE && b[i][j+1].color == theColor && ! b[i][j+1].visited) {
+                    nColorHits++;                
+                    if (side == HUMAN || side == COMPUTER) {
+                        b[i][j+1].ownership = side;
+                    }
+                    expandColor(i, j+1, theColor,side);
+                }
+            }
+        }
+    }
+    </script>
+
+    <style>
+        html, body {
+          margin-left: 15px;
+          margin-top: 15px;
+          padding: 0;
+          font: 1.2em "Arial", sans-serif;
+          background-color: #303030;
+          color: #fff;
+        }
+
+        input, button {
+          font: 0.8em "Arial", sans-serif;
+        }   
+
+        button {
+          cursor: pointer;
+          width: 150px;
+          margin-top: 10px;
+        }   
+
+        button.center {
+          margin-left: 25px;
+        }
+
+        div.center {
+          margin-left: auto;
+          margin-right: auto;
+        }  
+
+        div.unhinged {
+          display: block;
+          position: absolute;
+        }
+
+        a {
+          color: #fff;
+          text-decoration: none;
+        }
+
+        #the-you {
+          left: 260px;
+          top: 3px;
+        }
+
+        #the-them {
+          left: 603px;
+          top: 425px;
+        }
+
+        #help {
+          left: 35px;
+          top: 435px;
+        }
+
+        .color-button {
+          width: 80px;
+          height: 20px;
+          border-radius: 6px;
+          border: 1px solid black;
+          cursor: pointer;
+          margin-bottom: 12px;
+        }
+
+        .panel {
+          background-color: #707070;
+        }
+
+        #controls {
+          display: block;
+          width: 200px;
+          height: 400px;
+          border: 1px;
+          border: 1px solid black;
+          border-radius: 10px;
+          float: left;
+          background-image: url('things/CovidWars.svg');
+        }
+        #buttons {
+          padding-top: 5px;
+          padding-left: 0px;
+        }
+
+        #scores {
+          padding-top: 60px;
+          padding-left: 10px;
+          color: #ffffff;
+        }
+
+        #shim {
+          display: block;
+          width: 5px;
+          height: 400px;
+          float: left;
+        }
+        #can {
+          display: block;
+          padding-left: 20px;
+        }
+
+    </style>
+</head>
+<body>
+<div id="controls" class="panel">
+  <div id="scores">
+  </div>      
+  <div id="buttons">
+  </div>
+  <div><button  class="center" onclick="startup();displayButtons();">New Game</button></div>
+</div>
+
+
+<div id="shim"></div>
+<canvas id="can" width="800" height="800"></canvas>
+<div id="the-you" class="unhinged">
+  <img src="things/you.svg" />
+</div>
+<div id="the-them" class="unhinged">
+  <img src="things/them.svg" />
+</div>
+
+<div id="help" class="unhinged">
+  <a href="#" onclick="alert(instructions)">?</span>
+</div>
+
+<script type="text/javascript">
+    var can = document.getElementById("can");
+    can.width = CAN_WIDTH; can.height = CAN_HEIGHT;
+    var con = can.getContext("2d");
+    startup();
+</script>
+
+
+
+</body>
+
+<script type="text/template" id="control-content">   
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   width="200"
+   height="210"
+   viewBox="0 0 52.916669 55.562504"
+   version="1.1"
+   id="svg3133">
+  <defs
+     id="defs3127" />
+  <metadata
+     id="metadata3130">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title></dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <g
+     id="layer1"
+     transform="translate(0,-238.1414)">
+    <ellipse
+       style="fill:#d70000;fill-opacity:1;stroke:#000000;stroke-width:0.26458335;stroke-opacity:1"
+       cx="8.2627821"
+       cy="262.49564"
+       rx="5.3861609"
+       ry="8.4099703"
+       onclick="bothPlayersMove(1);" />
+    <ellipse
+       style="fill:#d45500;fill-opacity:1;stroke:#000000;stroke-width:0.26458335;stroke-opacity:1"
+       id="color-button-2"
+       cx="26.29369"
+       cy="252.44142"
+       rx="5.3861609"
+       ry="8.4099703"
+       onclick="bothPlayersMove(2);" />
+    <ellipse
+       style="fill:#ffff00;fill-opacity:1;stroke:#000000;stroke-width:0.26458335;stroke-opacity:1"
+       id="color-button-3"
+       cx="44.3246"
+       cy="262.49564"
+       rx="5.3861609"
+       ry="8.4099703"
+       onclick="bothPlayersMove(3);" />
+    <ellipse
+       style="fill:#00ffff;fill-opacity:1;stroke:#000000;stroke-width:0.26458335;stroke-opacity:1"
+       id="color-button-4"
+       cx="8.2627831"
+       cy="284.18689"
+       rx="5.3861609"
+       ry="8.4099703"
+       onclick="bothPlayersMove(4);" />
+    <ellipse
+       style="fill:#009c00;fill-opacity:1;stroke:#000000;stroke-width:0.26458335;stroke-opacity:1"
+       id="color-button-5"
+       cx="26.29369"
+       cy="274.13257"
+       rx="5.3861609"
+       ry="8.4099703"
+       onclick="bothPlayersMove(5);" />
+    <ellipse
+       style="fill:#800080;fill-opacity:1;stroke:#000000;stroke-width:0.26458335;stroke-opacity:1"
+       id="color-button-6"
+       cx="44.3246"
+       cy="284.18689"
+       rx="5.3861609"
+       ry="8.4099703"
+       onclick="bothPlayersMove(6);" />
+  </g>
+  <path
+     id="unavailable-1"
+     d="M 6.4446031,21.227147 A 0.66152452,0.66152452 0 0 0 5.936624,22.279796 l 1.4810466,2.068608 -1.4283368,2.054655 a 0.66154802,0.66154802 0 1 0 1.085722,0.755509 l 1.1601361,-1.668632 1.1151772,1.557528 A 0.66152452,0.66152452 0 1 0 10.424722,26.278002 L 9.0361764,24.338585 10.430923,22.332506 A 0.66152452,0.66152452 0 0 0 9.8878038,21.285542 0.66152452,0.66152452 0 0 0 9.3446848,21.57648 L 8.2181384,23.196536 7.0109769,21.510334 A 0.66152452,0.66152452 0 0 0 6.4446031,21.227147 Z"
+     style="color:#000000;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:medium;line-height:normal;font-family:sans-serif;font-variant-ligatures:normal;font-variant-position:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-alternates:normal;font-feature-settings:normal;text-indent:0;text-align:start;text-decoration:none;text-decoration-line:none;text-decoration-style:solid;text-decoration-color:#000000;letter-spacing:normal;word-spacing:normal;text-transform:none;writing-mode:lr-tb;direction:ltr;text-orientation:mixed;dominant-baseline:auto;baseline-shift:baseline;text-anchor:start;white-space:normal;shape-padding:0;clip-rule:nonzero;display:inline;overflow:visible;visibility:visible;opacity:1;isolation:auto;mix-blend-mode:normal;color-interpolation:sRGB;color-interpolation-filters:linearRGB;solid-color:#000000;solid-opacity:1;vector-effect:none;fill:#fe0000;fill-opacity:1;fill-rule:nonzero;stroke:#050000;stroke-width:0.26458335;stroke-linecap:round;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;color-rendering:auto;image-rendering:auto;shape-rendering:auto;text-rendering:auto;enable-background:accumulate" />
+  <path
+     id="unavailable-2"
+     d="m 24.499526,10.947998 a 0.66152452,0.66152452 0 0 0 -0.507979,1.052649 l 1.481047,2.068608 -1.428337,2.054656 a 0.66154801,0.66154801 0 1 0 1.085722,0.755509 l 1.160136,-1.668632 1.115177,1.557528 a 0.66152452,0.66152452 0 1 0 1.074353,-0.769462 l -1.388546,-1.939417 1.394747,-2.00608 a 0.66152452,0.66152452 0 0 0 -0.543119,-1.046964 0.66152452,0.66152452 0 0 0 -0.543119,0.290938 L 26.273061,12.917387 25.0659,11.231185 a 0.66152452,0.66152452 0 0 0 -0.566374,-0.283187 z"
+     style="color:#000000;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:medium;line-height:normal;font-family:sans-serif;font-variant-ligatures:normal;font-variant-position:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-alternates:normal;font-feature-settings:normal;text-indent:0;text-align:start;text-decoration:none;text-decoration-line:none;text-decoration-style:solid;text-decoration-color:#000000;letter-spacing:normal;word-spacing:normal;text-transform:none;writing-mode:lr-tb;direction:ltr;text-orientation:mixed;dominant-baseline:auto;baseline-shift:baseline;text-anchor:start;white-space:normal;shape-padding:0;clip-rule:nonzero;display:inline;overflow:visible;visibility:visible;opacity:1;isolation:auto;mix-blend-mode:normal;color-interpolation:sRGB;color-interpolation-filters:linearRGB;solid-color:#000000;solid-opacity:1;vector-effect:none;fill:#fe0000;fill-opacity:1;fill-rule:nonzero;stroke:#050000;stroke-width:0.26458335;stroke-linecap:round;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;color-rendering:auto;image-rendering:auto;shape-rendering:auto;text-rendering:auto;enable-background:accumulate" />
+  <path
+     id="unavailable-3"
+     d="m 42.62797,21.365968 a 0.66152452,0.66152452 0 0 0 -0.507979,1.052649 l 1.481047,2.068608 -1.428337,2.054655 a 0.66154801,0.66154801 0 1 0 1.085722,0.755509 l 1.160136,-1.668632 1.115177,1.557528 a 0.66152452,0.66152452 0 1 0 1.074353,-0.769462 l -1.388546,-1.939417 1.394747,-2.006079 a 0.66152452,0.66152452 0 0 0 -0.543119,-1.046964 0.66152452,0.66152452 0 0 0 -0.543119,0.290938 l -1.126547,1.620056 -1.207161,-1.686202 A 0.66152452,0.66152452 0 0 0 42.62797,21.365968 Z"
+     style="color:#000000;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:medium;line-height:normal;font-family:sans-serif;font-variant-ligatures:normal;font-variant-position:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-alternates:normal;font-feature-settings:normal;text-indent:0;text-align:start;text-decoration:none;text-decoration-line:none;text-decoration-style:solid;text-decoration-color:#000000;letter-spacing:normal;word-spacing:normal;text-transform:none;writing-mode:lr-tb;direction:ltr;text-orientation:mixed;dominant-baseline:auto;baseline-shift:baseline;text-anchor:start;white-space:normal;shape-padding:0;clip-rule:nonzero;display:inline;overflow:visible;visibility:visible;opacity:1;isolation:auto;mix-blend-mode:normal;color-interpolation:sRGB;color-interpolation-filters:linearRGB;solid-color:#000000;solid-opacity:1;vector-effect:none;fill:#fe0000;fill-opacity:1;fill-rule:nonzero;stroke:#050000;stroke-width:0.26458335;stroke-linecap:round;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;color-rendering:auto;image-rendering:auto;shape-rendering:auto;text-rendering:auto;enable-background:accumulate" />
+  <path
+     id="unavailable-4"
+     d="M 6.4887991,42.967068 A 0.66152452,0.66152452 0 0 0 5.98082,44.019717 l 1.4810466,2.068608 -1.4283368,2.054655 a 0.66154801,0.66154801 0 1 0 1.085722,0.755509 l 1.1601361,-1.668632 1.1151771,1.557528 a 0.66152452,0.66152452 0 1 0 1.074353,-0.769462 L 9.0803723,46.078506 10.475119,44.072427 A 0.66152452,0.66152452 0 0 0 9.9319995,43.025463 0.66152452,0.66152452 0 0 0 9.3888807,43.316401 L 8.2623343,44.936457 7.0551729,43.250255 A 0.66152452,0.66152452 0 0 0 6.4887991,42.967068 Z"
+     style="color:#000000;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:medium;line-height:normal;font-family:sans-serif;font-variant-ligatures:normal;font-variant-position:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-alternates:normal;font-feature-settings:normal;text-indent:0;text-align:start;text-decoration:none;text-decoration-line:none;text-decoration-style:solid;text-decoration-color:#000000;letter-spacing:normal;word-spacing:normal;text-transform:none;writing-mode:lr-tb;direction:ltr;text-orientation:mixed;dominant-baseline:auto;baseline-shift:baseline;text-anchor:start;white-space:normal;shape-padding:0;clip-rule:nonzero;display:inline;overflow:visible;visibility:visible;opacity:1;isolation:auto;mix-blend-mode:normal;color-interpolation:sRGB;color-interpolation-filters:linearRGB;solid-color:#000000;solid-opacity:1;vector-effect:none;fill:#fe0000;fill-opacity:1;fill-rule:nonzero;stroke:#050000;stroke-width:0.26458335;stroke-linecap:round;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;color-rendering:auto;image-rendering:auto;shape-rendering:auto;text-rendering:auto;enable-background:accumulate" />
+  <path
+     id="unavailable-5"
+     d="m 24.440667,33.196543 a 0.66152452,0.66152452 0 0 0 -0.507979,1.052649 l 1.481047,2.068608 -1.428337,2.054655 a 0.66154801,0.66154801 0 1 0 1.085722,0.755509 l 1.160136,-1.668632 1.115177,1.557528 a 0.66152452,0.66152452 0 1 0 1.074353,-0.769462 l -1.388546,-1.939417 1.394747,-2.006079 a 0.66152452,0.66152452 0 0 0 -0.543119,-1.046964 0.66152452,0.66152452 0 0 0 -0.543119,0.290938 l -1.126547,1.620056 -1.207161,-1.686202 a 0.66152452,0.66152452 0 0 0 -0.566374,-0.283187 z"
+     style="color:#000000;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:medium;line-height:normal;font-family:sans-serif;font-variant-ligatures:normal;font-variant-position:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-alternates:normal;font-feature-settings:normal;text-indent:0;text-align:start;text-decoration:none;text-decoration-line:none;text-decoration-style:solid;text-decoration-color:#000000;letter-spacing:normal;word-spacing:normal;text-transform:none;writing-mode:lr-tb;direction:ltr;text-orientation:mixed;dominant-baseline:auto;baseline-shift:baseline;text-anchor:start;white-space:normal;shape-padding:0;clip-rule:nonzero;display:inline;overflow:visible;visibility:visible;opacity:1;isolation:auto;mix-blend-mode:normal;color-interpolation:sRGB;color-interpolation-filters:linearRGB;solid-color:#000000;solid-opacity:1;vector-effect:none;fill:#fe0000;fill-opacity:1;fill-rule:nonzero;stroke:#050000;stroke-width:0.26458335;stroke-linecap:round;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;color-rendering:auto;image-rendering:auto;shape-rendering:auto;text-rendering:auto;enable-background:accumulate" />
+  <path
+     id="unavailable-6"
+     d="m 42.569111,42.967069 a 0.66152452,0.66152452 0 0 0 -0.507979,1.052648 l 1.481047,2.068608 -1.428337,2.054655 a 0.66154801,0.66154801 0 1 0 1.085722,0.755509 l 1.160136,-1.668631 1.115177,1.557527 a 0.66152452,0.66152452 0 1 0 1.074353,-0.769461 l -1.388545,-1.939418 1.394746,-2.006079 a 0.66152452,0.66152452 0 0 0 -0.543119,-1.046963 0.66152452,0.66152452 0 0 0 -0.543119,0.290937 l -1.126546,1.620056 -1.207162,-1.686202 a 0.66152452,0.66152452 0 0 0 -0.566374,-0.283186 z"
+     style="color:#000000;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:medium;line-height:normal;font-family:sans-serif;font-variant-ligatures:normal;font-variant-position:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-alternates:normal;font-feature-settings:normal;text-indent:0;text-align:start;text-decoration:none;text-decoration-line:none;text-decoration-style:solid;text-decoration-color:#000000;letter-spacing:normal;word-spacing:normal;text-transform:none;writing-mode:lr-tb;direction:ltr;text-orientation:mixed;dominant-baseline:auto;baseline-shift:baseline;text-anchor:start;white-space:normal;shape-padding:0;clip-rule:nonzero;display:inline;overflow:visible;visibility:visible;opacity:1;isolation:auto;mix-blend-mode:normal;color-interpolation:sRGB;color-interpolation-filters:linearRGB;solid-color:#000000;solid-opacity:1;vector-effect:none;fill:#fe0000;fill-opacity:1;fill-rule:nonzero;stroke:#050000;stroke-width:0.26458335;stroke-linecap:round;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;color-rendering:auto;image-rendering:auto;shape-rendering:auto;text-rendering:auto;enable-background:accumulate" />
+  <text
+     id="parent-err-message"
+     y="4.0023837"
+     x="1.6480403"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:4.23333359px;line-height:1.25;font-family:Monaco;-inkscape-font-specification:Monaco;letter-spacing:0px;word-spacing:0px;fill:#ffffff;fill-opacity:1;stroke:none;stroke-width:0.26458335"
+     xml:space="preserve"><tspan
+       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:3.52777791px;font-family:sans-serif;-inkscape-font-specification:sans-serif;stroke-width:0.26458335"
+       y="4.0023837"
+       x="1.6480403"
+       id="err-message">That color is not next to you</tspan></text>
+</svg>
+
+</script>
+
+<script type="text/template" id="score-content">
+    <table class="center">
+        <tr><th>&nbsp;&nbsp;&nbsp;you&nbsp;&nbsp;&nbsp;</th><th>&nbsp;&nbsp;&nbsp;them&nbsp;&nbsp;&nbsp;</th></tr>
+        <tr><td align="center">__human_score__</td><td align="center">__computer_score__</td></tr>
+    </table> 
+</script>
+
+<script type="text/javascript">
+    displayButtons();
+    //displayScores();
+</script>
+
+</html>
